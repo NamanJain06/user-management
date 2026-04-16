@@ -6,6 +6,7 @@ import AddUserForm from '@/components/AddUserForm'
 import DeleteUserModal from '@/components/DeleteUserModal'
 import { useRouter } from 'next/navigation'
 import Loader from '@/components/Loader'
+import { Lock } from 'lucide-react'
 
 export default function UsersAdmin() {
   const [users, setUsers] = useState<any[]>([])
@@ -18,13 +19,23 @@ export default function UsersAdmin() {
   const [permissions, setPermissions] = useState<any>(null)
   const [roleName, setRoleName] = useState<string | null>(null)
 
+  const [toast, setToast] = useState<{
+    message: string
+    type: 'success' | 'error'
+  } | null>(null)
+
   const router = useRouter()
 
   useEffect(() => {
     checkAccess()
   }, [])
 
-  // 🔐 ACCESS CONTROL (FIXED)
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
+
+  // 🔐 ACCESS CONTROL
   const checkAccess = async () => {
     try {
       const { data } = await supabase.auth.getSession()
@@ -50,21 +61,16 @@ export default function UsersAdmin() {
         .maybeSingle()
 
       if (error || !userData) {
-        console.error('User Fetch Error:', error)
         router.replace('/')
         return
       }
 
-      // ✅ CRITICAL FIX (handles both array & object)
       const roleData = Array.isArray(userData?.roles)
         ? userData.roles[0]
         : userData?.roles
 
       const role = roleData?.name || null
       const perms = roleData?.permissions || {}
-
-      console.log('ROLE:', role)
-      console.log('PERMISSIONS:', perms)
 
       setRoleName(role)
       setPermissions(perms)
@@ -73,40 +79,39 @@ export default function UsersAdmin() {
       const canView = perms?.can_view_admin === true
 
       if (!isAdmin && !canView) {
-        console.log('ACCESS DENIED')
         router.replace('/')
         return
       }
 
       await fetchUsers()
     } catch (err) {
-      console.error('Access Check Error:', err)
+      console.error(err)
     } finally {
       setLoading(false)
     }
   }
 
-  // 🔁 FETCH USERS
   const fetchUsers = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('users')
       .select(`*, roles:roles!users_role_id_fkey (name)`)
-
-    if (error) {
-      console.error('Fetch Users Error:', error)
-      return
-    }
 
     setUsers(data || [])
   }
 
-  // ✏️ EDIT
   const handleEdit = (user: any) => {
+    const isProtectedUser =
+      user.email === 'njain.host@gmail.com'
+
+    if (isProtectedUser) {
+      showToast('You cannot edit this user', 'error')
+      return
+    }
+
     setEditingUser(user)
     setShowForm(true)
   }
 
-  // 🗑️ DELETE
   const confirmDelete = async () => {
     if (!deleteUserId) return
 
@@ -120,18 +125,17 @@ export default function UsersAdmin() {
     setDeleteLoading(false)
 
     if (error) {
-      console.error('Delete Error:', error)
-      return
+      showToast('Error deleting user', 'error')
+    } else {
+      setDeleteUserId(null)
+      fetchUsers()
+      showToast('User deleted successfully', 'success')
     }
-
-    setDeleteUserId(null)
-    fetchUsers()
   }
 
   if (loading) return <Loader />
 
   const isAdmin = roleName?.toLowerCase() === 'admin'
-
   const canCreate = isAdmin || permissions?.can_create_user
   const canEdit = isAdmin || permissions?.can_edit_user
   const canDelete = isAdmin || permissions?.can_delete_user
@@ -149,7 +153,7 @@ export default function UsersAdmin() {
               setEditingUser(null)
               setShowForm(true)
             }}
-            className="bg-blue-600 text-white px-4 py-2 rounded cursor-pointer"
+            className="bg-blue-600 text-white px-4 py-2 rounded"
           >
             Add User
           </button>
@@ -158,58 +162,84 @@ export default function UsersAdmin() {
 
       {/* List */}
       <div className="bg-white p-4 rounded shadow">
-        {users.length === 0 ? (
-          <p className="text-gray-400 text-center py-4">
-            No users available. Add your first user.
-          </p>
-        ) : (
-          users.map((user) => {
-            // ✅ FIX ROLE DISPLAY
-            const roleDisplay = Array.isArray(user.roles)
-              ? user.roles[0]?.name
-              : user.roles?.name
+        {users.map((user) => {
+          const roleDisplay = Array.isArray(user.roles)
+            ? user.roles[0]?.name
+            : user.roles?.name
 
-            return (
-              <div
-                key={user.id}
-                className="flex justify-between items-center border-b py-3"
-              >
-                {/* User Info */}
-                <div>
+          const isProtectedUser =
+            user.email === 'njain.host@gmail.com'
+
+          return (
+            <div
+              key={user.id}
+              className="flex justify-between items-center border-b py-3"
+            >
+              {/* User Info */}
+              <div>
+                <div className="flex items-center gap-2">
                   <div className="font-medium">{user.name}</div>
-                  <div className="text-gray-500 text-sm">{user.email}</div>
-                  <div className="text-xs text-blue-500 mt-1">
-                    {roleDisplay || 'No Role'}
-                  </div>
+
+                  {isProtectedUser && (
+                    <div className="relative group">
+                      <Lock
+                        size={14}
+                        className="text-red-500 group-hover:scale-110 transition"
+                      />
+
+                      <div className="absolute left-5 top-0 hidden group-hover:block 
+                        bg-black text-white text-xs px-2 py-1 rounded whitespace-nowrap z-50">
+                        Protected user
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Actions */}
-                <div className="flex gap-2">
-                  {canEdit && (
-                    <button
-                      onClick={() => handleEdit(user)}
-                      className="px-3 py-1 bg-yellow-500 text-white rounded cursor-pointer"
-                    >
-                      Edit
-                    </button>
-                  )}
-
-                  {canDelete && (
-                    <button
-                      onClick={() => setDeleteUserId(user.id)}
-                      className="px-3 py-1 bg-red-500 text-white rounded cursor-pointer"
-                    >
-                      Delete
-                    </button>
-                  )}
+                <div className="text-gray-500 text-sm">{user.email}</div>
+                <div className="text-xs text-blue-500 mt-1">
+                  {roleDisplay || 'No Role'}
                 </div>
               </div>
-            )
-          })
-        )}
+
+              {/* Actions */}
+              <div className="flex gap-2">
+                {canEdit && (
+                  <button
+                    onClick={() => handleEdit(user)}
+                    className="px-3 py-1 bg-yellow-500 text-white rounded"
+                  >
+                    Edit
+                  </button>
+                )}
+
+                {canDelete && (
+                  <button
+                    onClick={() => {
+                      const isProtectedUser =
+                        user.email === 'njain.host@gmail.com'
+
+                      if (isProtectedUser) {
+                        showToast(
+                          'You cannot delete this user',
+                          'error'
+                        )
+                        return
+                      }
+
+                      setDeleteUserId(user.id)
+                    }}
+                    className="px-3 py-1 bg-red-500 text-white rounded"
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
-      {/* Add/Edit Modal */}
+      {/* Modals */}
       {showForm && (
         <AddUserForm
           onClose={() => {
@@ -221,13 +251,22 @@ export default function UsersAdmin() {
         />
       )}
 
-      {/* Delete Modal */}
       {deleteUserId && (
         <DeleteUserModal
           onClose={() => setDeleteUserId(null)}
           onConfirm={confirmDelete}
           loading={deleteLoading}
         />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className={`fixed top-5 right-5 px-4 py-2 rounded shadow-lg text-white z-50
+          ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}
+        >
+          {toast.message}
+        </div>
       )}
     </div>
   )
